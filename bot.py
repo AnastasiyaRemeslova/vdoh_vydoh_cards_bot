@@ -1,66 +1,47 @@
 import os
 import random
-from datetime import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = "8687686811:AAFodDPyMBlYGBChIimWkZvrvnf6YEJYx38"
-CARDS_FOLDER = "cards"
+# Получаем токен из переменных окружения
+TOKEN = os.getenv("TOKEN")
 
-# Список пользователей, которые начали бота
-users = set()
+# Кнопка для получения карточки
+keyboard = [["Получить карточку"]]
 
-# --- Функция отправки сообщения с кнопкой ---
-async def send_invite_message(chat_id, bot):
-    keyboard = [[InlineKeyboardButton("Получить карточку", callback_data="draw_card")]]
-    markup = InlineKeyboardMarkup(keyboard)
-    await bot.send_message(
-        chat_id=chat_id,
-        text="Нажмите кнопку, чтобы получить карточку",
-        reply_markup=markup
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Нажмите кнопку, чтобы получить карточку",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Получить карточку", callback_data="get_card")]]
+        )
     )
 
-# --- Команда /start ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    users.add(chat_id)  # сохраняем ID пользователя
-    await send_invite_message(chat_id, context.bot)
-
-# --- Обработчик кнопки ---
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка нажатия на кнопку
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if query.data == "get_card":
+        cards = os.listdir("cards")
+        card = random.choice(cards)
+        with open(f"cards/{card}", "rb") as img:
+            await query.message.reply_photo(img)
+        # Напоминание, что можно вытянуть следующую карту
+        await query.message.reply_text(
+            "Нажмите кнопку, чтобы получить следующую карточку",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Получить карточку", callback_data="get_card")]]
+            )
+        )
 
-    # Случайная карта
-    cards = os.listdir(CARDS_FOLDER)
-    card = random.choice(cards)
-
-    with open(f"{CARDS_FOLDER}/{card}", "rb") as img:
-        await query.message.reply_photo(img)
-
-    # Отправляем напоминание о возможности вытянуть следующую карту
-    chat_id = query.from_user.id
-    await send_invite_message(chat_id, context.bot)
-
-# --- Создаём приложение ---
+# Создаём приложение
 app = ApplicationBuilder().token(TOKEN).build()
+
+# Добавляем обработчики
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(button_callback))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), start))  # на случай, если пользователь пишет текст
+app.add_handler(MessageHandler(filters.StatusUpdate.ALL, start))
+app.add_handler(telegram.ext.CallbackQueryHandler(button_handler))
 
-# --- JobQueue для ежедневного сообщения ---
-job_queue = app.job_queue
-
-async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
-    for chat_id in users:
-        await send_invite_message(chat_id, context.bot)
-
-# Запуск ежедневного сообщения в 10:00
-job_queue.run_daily(daily_reminder, time(hour=10, minute=0))
-
-# --- Запуск бота ---
+# Запуск бота с polling
 app.run_polling()
